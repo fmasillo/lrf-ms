@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+
+# .ms files
+*.ms
+
+# .json files
+*.json
+
+# lrf_ms file
+lrf_ms

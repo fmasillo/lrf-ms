@@ -1,15 +1,18 @@
 CC = g++
-CFLAGS = -Wall -Wextra -O3 -std=c++20 -march=native -fopenmp
+CFLAGS = -std=c++20 -O3 -march=native -DNDEBUG -fopenmp -DLIBSAIS_OPENMP -funroll-loops -g
 
-SRCS = matching_statistics.cpp libsais/src/libsais.c
-OBJS = matching_statistics.o libsais/src/libsais.o
+SRCS = libsais/src/libsais.o matching_statistics.cpp 
+OBJS = $(SRCS:.cpp=.o)
 
 TARGET = lrf_ms
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $(OBJS)
+
+.cpp.o:
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(OBJS) $(TARGET)

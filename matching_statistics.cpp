@@ -22,7 +22,7 @@ void print_help(char** argv) {
   std::cout << "Usage: " << argv[ 0 ] << " -r reference_file -c collection_file [options]" << std::endl;
   std::cout << "  Options: " << std::endl
             << "    -o <output file> : basename for the output files (default: reference_collection)" << std::endl
-            << "    -b <buffer size> : size of the buffer for reading the collection file (default: 10000000)" << std::endl
+            << "    -b <buffer size> : size of the buffer for holding the temporary MS entries in MB (default: 100)" << std::endl
             << "    -t <number of threads> : number of threads to use (default: 1)" << std::endl
             << "    -h : print this help" << std::endl;
   exit(-1);
@@ -32,8 +32,8 @@ struct Args {
     std::string reference;
     std::string collection;
     std::string outfile;
-    int bufferText = 10000000;
-    int numThreads = 1;
+    int bufferText = 104857600;
+    int numThreads = 16;
 };
 
 
@@ -52,22 +52,25 @@ void parseArgs( int argc, char** argv, Args& arg ) {
     while ((c = getopt( argc, argv, "r:c:o:b:t:h") ) != -1) {
         switch(c) {
             case 'r':
-                arg.reference.assign( optarg );
+                arg.reference.assign(optarg);
                 break;
             case 'c':
-                arg.collection.assign( optarg );
+                arg.collection.assign(optarg);
                 break;
             case 'o':
-                arg.outfile.assign( optarg );
+                arg.outfile.assign(optarg);
                 break;
             case 'b':
-                arg.bufferText = std::stoi(optarg);
+                arg.bufferText = 1048576*std::stoi(optarg);
+                break;
+            case 't':
+                arg.numThreads = std::stoi(optarg);
                 break;
             case 'h':
                 print_help(argv); exit(-1);
                 // fall through
             default:
-                std::cout << "Unknown option. Use -h for help." << std::endl;
+                std::cout << "Unknown option \"" << (char)c << "\". Use -h for help." << std::endl;
                 exit(-1); 
         }
     }
@@ -446,7 +449,7 @@ void loadReferenceAndComputeDS_parallel(std::string refFileName, uint32_t numThr
 
 }
 
-std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatistics(std::string collFileName, uint64_t bufferText, std::string outputFileName = ""){
+void computeMatchingStatistics(std::string collFileName, uint64_t bufferText, std::string outputFileName = ""){
     
     std::ofstream streamOutfile(outputFileName, std::ios::out | std::ios::binary);
     uint64_t time = 0;
@@ -464,7 +467,7 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatistics(std::string
     printf("About to read sequence of size %lu with prefix %lu\n", _sizeCollection, _sn);
     fclose(infile);
 
-    uint64_t capBufferWrite = 100000000 / sizeof(std::pair<uint32_t, uint32_t>);
+    uint64_t capBufferWrite = (bufferText-_sizeReference) / sizeof(std::pair<uint32_t, uint32_t>) + 1;
     
     std::vector<std::pair<uint32_t, uint32_t>> matchingStatistics;
     matchingStatistics.reserve(2*capBufferWrite);
@@ -609,15 +612,13 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatistics(std::string
     printf("Time to compute matching statistics: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count());
     printf("Times used euristics %ld\n", time);
     printf("Unlucky %ld\n", unlucky);
-    return matchingStatistics;
 
 }
 
-std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std::string collFileName, uint64_t bufferText, std::string outputFileName = "", uint32_t numThreads = 1){
+void computeMatchingStatisticsParallel(std::string collFileName, uint64_t bufferText, std::string outputFileName = "", uint32_t numThreads = 16){
 
     std::cout << "Number of threads: " << numThreads << '\n';
     omp_set_num_threads(numThreads);
-    uint64_t capBufferWrite = 100000000 / sizeof(std::pair<uint32_t, uint32_t>);
     uint64_t time = 0;
     auto t1 = std::chrono::high_resolution_clock::now();
     FILE *infile = fopen(collFileName.c_str(), "r");
@@ -633,6 +634,26 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std
     fclose(infile);
 
     std::vector<std::vector<std::pair<uint32_t, uint32_t>>> matchingStatistics(numThreads);
+
+    uint64_t numberSeqToRead = 0, capBufferWrite = 0;
+    std::vector<uint64_t> parts;
+    parts.reserve(numThreads+1);
+    if(bufferText/2 < 2*_sizeReference){
+        numberSeqToRead = 1;
+        capBufferWrite = (bufferText-_sizeReference) / sizeof(std::pair<uint32_t, uint32_t>) + 1;
+        parts.push_back(0);
+        for(uint32_t i = 1; i < numThreads; i++){
+            parts.push_back(std::round((uint64_t)_sizeReference/numThreads*i));
+            // std::cout << "parts[" << i << "]: " << parts[i] << '\n';
+        }
+        parts.push_back(_sizeReference);
+    }
+    else{
+        numberSeqToRead = bufferText/2 / _sizeReference;
+        capBufferWrite = (bufferText/2) / sizeof(std::pair<uint32_t, uint32_t>) + 1;
+    }
+    // std::cout << "Number of sequences to read: " << numberSeqToRead << '\n';
+    // std::cout << "Cap buffer write: " << capBufferWrite << '\n';
 
     for(uint32_t i = 0; i < numThreads; i++){
         matchingStatistics[i].reserve(capBufferWrite/numThreads);
@@ -653,14 +674,19 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std
                 exit(1);
             }
         }
-        uint64_t charactersToRead = std::min(bufferText, _sn - charactersRead);
+        // uint64_t charactersToRead = std::min(bufferText, _sn - charactersRead);
         uint64_t charactersReadNow = 0;
         std::string content;
-        content.reserve(charactersToRead);
-        while(charactersReadNow < charactersToRead){
+        content.reserve(numberSeqToRead*_sizeReference);
+        uint32_t seqRead = 0;
+        std::vector<uint64_t> posForSequenceSeparator;
+        while(seqRead < numberSeqToRead & charactersRead + charactersReadNow < _sn){
             std::getline(streamInfile, line);
             if(line[0] == '>'){
+                if(content.size() == 0) continue;
                 content += sequenceSeparator;
+                posForSequenceSeparator.push_back(content.size());
+                seqRead++;
             }
             else{
                 content += line;
@@ -669,18 +695,46 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std
         }
         // std::cout << "content.size(): " << content.size() << '\n';
         charactersRead += charactersReadNow;
+        // std::cout << "charactersRead: " << charactersRead << '\n';
 
-        std::vector<uint64_t> parts;
-        parts.reserve(numThreads+1);
-        parts.push_back(0);
-        for(uint32_t i = 1; i < numThreads; i++){
-            parts.push_back(std::round((uint64_t)content.size()/numThreads*i));
-            // std::cout << "parts[" << i << "]: " << parts[i] << '\n';
+        if(numberSeqToRead != 1){
+            parts.clear();
+            parts.push_back(0);
+            if(numThreads < numberSeqToRead){
+                // std::cout << "Num threads < numberSeqToRead\n";
+                // std::cout << "posForSequenceSeparator.size(): " << posForSequenceSeparator.size() << '\n';
+                if(posForSequenceSeparator.size() > numThreads){
+                    for(uint32_t x = 0; x < numThreads; x++){
+                        parts.push_back(posForSequenceSeparator[std::round(posForSequenceSeparator.size()/numThreads * x)]);
+                        // std::cout << "parts[" << x << "]: " << parts[x] << '\n';
+                    }
+                    parts.push_back(posForSequenceSeparator[posForSequenceSeparator.size()-1]);
+                }
+                else{
+                    // std::cout << "Num threads > numberSeqToRead\n";
+                    for(uint32_t x = 0; x < numThreads; x++){
+                        parts.push_back(std::round(content.size()/numThreads * x));
+                        // std::cout << "parts[" << x << "]: " << parts[x] << '\n';
+                    }
+                    parts.push_back(content.size());
+                }
+            }
+            else{
+                // std::cout << "Num threads > numberSeqToRead\n";
+                for(uint32_t x = 0; x < numThreads; x++){
+                    parts.push_back(std::round(charactersReadNow/numThreads * x));
+                    // std::cout << "parts[" << x << "]: " << parts[x] << '\n';
+                }
+                parts.push_back(charactersReadNow);
+            }
         }
-        parts.push_back(content.size());
+        else{
+            parts[numThreads] = charactersReadNow;
+        }
 
         #pragma omp parallel for
         for(uint32_t thread = 0; thread < numThreads; thread++){
+            // std::cout << omp_get_thread_num() << '\n';
             uint64_t i = parts[thread];
             int32_t leftB = 0;
             int32_t rightB = _sizeReference-1;
@@ -730,6 +784,7 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std
             }
             if(matchingStatistics[omp_get_thread_num()].size() != 0){
                 streamOutfiles[omp_get_thread_num()].write(reinterpret_cast<char*>(&matchingStatistics[omp_get_thread_num()][0]), matchingStatistics[omp_get_thread_num()].size()*sizeof(std::pair<uint32_t, uint32_t>));
+                streamOutfiles[omp_get_thread_num()].close();
                 matchingStatistics[omp_get_thread_num()].clear();
             }
         }
@@ -758,43 +813,24 @@ std::vector<std::pair<uint32_t, uint32_t>> computeMatchingStatisticsParallel(std
     }
 
     std::cout << "Time to compute matching statistics: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now()-t1).count() << " ms\n";
-
-
-    return std::vector<std::pair<uint32_t, uint32_t>>();
 }
 
 int main(int argc, char **argv){
-    // if(argc < 5){
-    //     fprintf(stderr, "Usage: %s <reference> <collection> <prefix_size_in_MB> <output_file_name>\n", argv[0]);
-    //     exit(1);
-    // }
-    // std::string referenceFileName = argv[1];
-    // std::string collFileName = argv[2];
-    // uint64_t prefix = atoll(argv[3]);
-
-    // if(prefix == 0){
-    //     fprintf(stderr, "Prefix must be greater than 0\n");
-    //     exit(1);
-    // }
-    // else{
-    //     prefix *= 1000000;
-    //     printf("Prefix: %lu MB\n", prefix/1000000);
-    // }
-
     Args arg;
     parseArgs(argc, argv, arg);
     std::string referenceFileName = arg.reference;
     std::string collFileName = arg.collection;
 
+    // std::cout << omp_get_max_threads() << '\n';
     if(arg.numThreads > 1){
         std::cout << "Using " << arg.numThreads << " threads\n";
-        omp_set_num_threads(arg.numThreads);
+        // omp_set_num_threads(arg.numThreads);
         loadReferenceAndComputeDS_parallel(referenceFileName, arg.numThreads);
-        std::vector<std::pair<uint32_t, uint32_t>> matchingStatistics = computeMatchingStatisticsParallel(collFileName, arg.bufferText, arg.outfile+".ms", arg.numThreads);
+        computeMatchingStatisticsParallel(collFileName, arg.bufferText, arg.outfile+".ms", arg.numThreads);
     }
     else{
         loadReferenceAndComputeDS(referenceFileName);
-        std::vector<std::pair<uint32_t, uint32_t>> matchingStatistics = computeMatchingStatistics(collFileName, arg.bufferText, arg.outfile+".ms");
+        computeMatchingStatistics(collFileName, arg.bufferText, arg.outfile+".ms");
     }
     return 0;
 }
