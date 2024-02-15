@@ -13,7 +13,7 @@ make
 
 This tool works on fasta files.
 
-'''
+'''sh
 ./lrf_ms -r reference_file -c collection_file [options]
   Options: 
     -o <output file> : basename for the output files (default: reference_collection)
