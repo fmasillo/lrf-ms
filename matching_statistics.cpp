@@ -29,7 +29,7 @@ void print_help(char **argv) {
       << "    -b <buffer size> : size of the buffer for holding the temporary "
          "MS entries in MB (default: 100)"
       << std::endl
-      << "    -t <number of threads> : number of threads to use (default: 1)"
+      << "    -t <number of threads> : number of threads to use (default: 8)"
       << std::endl
       << "    -h : print this help" << std::endl;
   exit(-1);
