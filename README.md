@@ -27,7 +27,7 @@ This tool works on fasta files.
 
 Conference paper:
 
-Zsuzsanna Lipták, Martina Lucà, Francesco Masillo, and Simon J. Puglisi. Fast Matching Statistics for Sets of Long Similar Strings. In Proc. of the Prague Stringology Conference 2024, pages 3--15. Czech Technical University in Prague, Faculty of Information Technology, Department of Theoretical Computer Science, 2024: [https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.WABI.2022.20](https://www.stringology.org/event/2024/p02.html)
+Zsuzsanna Lipták, Martina Lucà, Francesco Masillo, and Simon J. Puglisi. Fast Matching Statistics for Sets of Long Similar Strings. In Proc. of the Prague Stringology Conference 2024, pages 3--15. Czech Technical University in Prague, Faculty of Information Technology, Department of Theoretical Computer Science, 2024: https://www.stringology.org/event/2024/p02.html
 
 ```
 @inproceedings{DBLP:conf/stringology/LiptakLMP24,
